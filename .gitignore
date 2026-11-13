@@ -1,0 +1,9 @@
+# API keys must never be committed (they are read from the environment only)
+.env
+# Runtime state produced by the test harness
+runs/
+app/sandbox_jail/
+**/outbox/
+**/__pycache__/
+.venv/
+report.pdf
