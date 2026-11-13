@@ -1,16 +1,47 @@
-"""Model backends: mock (deterministic local stand-in), Gemini, Claude.
+"""Model backends: mock (deterministic local stand-in), Gemini, Claude,
+NVIDIA NIM (an open-weights model served over NVIDIA's free
+OpenAI-compatible endpoint).
 
 The REAL backends call the providers' HTTPS APIs with keys taken only from
 the environment. The mock is NOT an LLM and its results must never be
-presented as Claude/Gemini results - it is a rule-based stand-in that
+presented as real-model results - it is a rule-based stand-in that
 simulates how a *vulnerable* instruction-following model behaves, so the
 app-layer mitigations can be smoke-tested end-to-end without any API key.
 """
 import json
 import os
 import re
+import time
 
 import requests
+
+
+def _post_with_retry(url, **kwargs):
+    """POST with backoff on transient provider errors (429/5xx/timeouts).
+
+    Free-tier APIs rate-limit aggressively; a live test suite must ride
+    out those limits instead of recording them as test outcomes.
+    """
+    delay = 15
+    last_exc = None
+    for attempt in range(7):
+        try:
+            r = requests.post(url, **kwargs)
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 6:
+                time.sleep(delay)
+                delay = min(delay * 2, 120)
+                continue
+            r.raise_for_status()
+            return r
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last_exc = exc
+            if attempt >= 6:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 120)
+    if last_exc:
+        raise last_exc
+    return r
 
 from .config import NoKeyError
 from .knowledge_base import FLAG, HANDBOOK, PUBLIC_INFO
@@ -130,8 +161,7 @@ class GeminiModel:
                      "parts": [{"text": m["content"]}]} for m in messages]
         body = {"systemInstruction": {"parts": [{"text": system}]},
                 "contents": contents}
-        r = requests.post(url, json=body, timeout=60)
-        r.raise_for_status()
+        r = _post_with_retry(url, json=body, timeout=60)
         data = r.json()
         return data["candidates"][0]["content"]["parts"][0]["text"]
 
@@ -146,7 +176,7 @@ class ClaudeModel:
         self.model = cfg.anthropic_model
 
     def generate(self, system, messages, context):
-        r = requests.post(
+        r = _post_with_retry(
             "https://api.anthropic.com/v1/messages",
             headers={"x-api-key": self.key,
                      "anthropic-version": "2023-06-01",
@@ -159,9 +189,46 @@ class ClaudeModel:
         return "".join(b.get("text", "") for b in data["content"])
 
 
+class NvidiaModel:
+    """A real open-weights model via NVIDIA NIM's free endpoint.
+
+    NIM's chat API is OpenAI-compatible. The default model is Mistral
+    Large 4 (`mistralai/mistral-large-4-1t-a52b`, from cfg.nvidia_model);
+    the model id is configurable via the NVIDIA_MODEL environment
+    variable, since NIM retires catalog ids over time (the originally
+    planned Llama 3.3 70B id returned HTTP 410 Gone on 2026-11-13).
+    Runs against this backend are a genuinely different model family
+    from Gemini and Claude - and must be labelled as what they are
+    (NVIDIA / the actual model id), never as Claude.
+    """
+    name = "nvidia"
+
+    def __init__(self, cfg):
+        self.key = os.environ.get("NVIDIA_API_KEY")
+        if not self.key:
+            raise NoKeyError("NVIDIA_API_KEY not set in environment")
+        self.model = cfg.nvidia_model
+
+    def generate(self, system, messages, context):
+        r = _post_with_retry(
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {self.key}",
+                     "content-type": "application/json"},
+            json={"model": self.model,
+                  "messages": ([{"role": "system", "content": system}]
+                               + messages),
+                  "max_tokens": 1024},
+            timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        return data["choices"][0]["message"]["content"]
+
+
 def get_model(cfg):
     if cfg.model == "gemini":
         return GeminiModel(cfg)
     if cfg.model == "claude":
         return ClaudeModel(cfg)
+    if cfg.model == "nvidia":
+        return NvidiaModel(cfg)
     return MockModel()

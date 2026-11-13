@@ -59,7 +59,7 @@ class Tools:
             self.events.append(f"tool-allowlist: read_file({name}) denied")
             return f"ERROR: read_file is restricted to {ALLOWED_FILES}."
         full = os.path.join(self.data_dir, name)
-        if not os.path.exists(full):
+        if not os.path.exists(full) or os.path.isdir(full):
             return f"ERROR: no such file {name}"
         with open(full) as f:
             content = f.read()

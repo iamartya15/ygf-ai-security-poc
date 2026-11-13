@@ -2,10 +2,10 @@
 
 Flags can be set via constructor arguments (the test runner does this) or
 environment variables:
-  MODEL=gemini|claude|mock      (default: mock)
-  MITIGATIONS=on|off            (default: off)
+  MODEL=gemini|claude|nvidia|mock   (default: mock)
+  MITIGATIONS=on|off                (default: off)
 API keys are read ONLY from the environment (GEMINI_API_KEY,
-ANTHROPIC_API_KEY) and are never stored in any file.
+ANTHROPIC_API_KEY, NVIDIA_API_KEY) and are never stored in any file.
 """
 import os
 
@@ -23,8 +23,11 @@ class Config:
         # Trusted identity channel: the caller's role comes from the hosting
         # application (this constructor), NEVER from user-supplied text.
         self.session_role = session_role
-        self.gemini_model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+        self.gemini_model = os.environ.get("GEMINI_MODEL",
+                                           "gemini-3.5-flash-lite")
         self.anthropic_model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+        self.nvidia_model = os.environ.get("NVIDIA_MODEL",
+                                           "mistralai/mistral-large-4-1t-a52b")
 
     @property
     def phase(self):
