@@ -8,7 +8,8 @@ against a small chatbot and an AI agent, tests each risk **before** and
 > every payload is harmless (marker strings and flag files only). The
 > `mock` model is a deterministic, rule-based stand-in used to smoke-test
 > the harness without API keys — **mock results are labelled `mock [MOCK]`
-> and are NOT Claude or Gemini results.** Live Claude/Gemini rows are only
+> and are NOT real-model results.** Live rows for the real backends
+> (Gemini, Claude, NVIDIA NIM) are only
 > produced when real API keys are present in the environment; otherwise the
 > runner writes `SKIPPED` rows with a `NO-KEY` evidence note instead of
 > inventing outcomes. No real email is ever sent, no real external HTTP
@@ -24,12 +25,12 @@ against a small chatbot and an AI agent, tests each risk **before** and
 | `app/tools.py` | Fake/local tools: `read_file` (sandboxed), `http_call` (local stub, never real traffic), `send_email` (local outbox file, never sends), `run_code` (jailed subprocess) |
 | `app/mcp_stub.py` | Fake MCP server returning a **poisoned tool description** (MCP connection risk demo) |
 | `app/mitigations.py` | The mitigation controls (input filter, redaction, sink encoding, memory signing, MCP description pinning) |
-| `app/models.py` | Model backends: `mock`, `gemini`, `claude` |
+| `app/models.py` | Model backends: `mock`, `gemini`, `claude`, `nvidia` |
 | `attacks/cases.json` | 30 attack cases: 10 risks × 3 cases, each with success/partial markers |
 | `runner.py` | Executes every case per model per phase and writes the results CSV |
 | `results_mock.csv` | Harness smoke-test output (mock model — NOT real-model results) |
-| `results.csv` | Live-model results sheet (Claude/Gemini; `SKIPPED` until keys are provided) |
-| `REPORT.md` | Report draft for the PDF (max 10 pages) |
+| `results.csv` | Live-model results sheet: 120 live rows — Gemini 3.5 Flash-Lite + Mistral Large 4 via NVIDIA NIM (Claude not tested: paid API, no free tier) |
+| `REPORT.md` | Final report source for `report.pdf` (max 10 pages) |
 | `demo_script.md` | 5–10 minute demo-video narration outline |
 | `build_report.py` | Renders `report.pdf` from the report content |
 
@@ -58,9 +59,38 @@ export ANTHROPIC_API_KEY=...     # from Anthropic Console
 python3 runner.py --models gemini,claude   # writes results.csv
 ```
 
-Optional env: `GEMINI_MODEL` (default `gemini-2.0-flash`),
+Optional env: `GEMINI_MODEL` (default `gemini-3.5-flash-lite`),
 `ANTHROPIC_MODEL` (default `claude-sonnet-4-5`). The app can also be run
-standalone with `MODEL=gemini|claude|mock` and `MITIGATIONS=on|off`.
+standalone with `MODEL=gemini|claude|nvidia|mock` and `MITIGATIONS=on|off`.
+
+## Running with NVIDIA NIM (free second model)
+
+Claude's API has no free tier, so the suite also supports **NVIDIA NIM**
+as a second *real* model family at no cost. NIM serves open-weights
+models over an OpenAI-compatible endpoint; the default model is
+**Mistral Large 4** (`mistralai/mistral-large-4-1t-a52b`). The model
+originally planned for this slot, Meta's Llama 3.3 70B Instruct
+(`meta/llama-3.3-70b-instruct`), had been retired by NVIDIA — probing
+it on 2026-11-13 returned HTTP 410 Gone — so Mistral Large 4 was taken
+from the live NIM catalog instead and is the model the live run
+actually used.
+
+1. Get a free API key at <https://build.nvidia.com> (sign in → API Keys →
+   generate; the free tier needs no payment method).
+2. Export it — environment only, never write it into any file:
+
+```bash
+export NVIDIA_API_KEY=...        # from build.nvidia.com
+python3 runner.py --models gemini,nvidia   # writes results.csv
+```
+
+Optional env: `NVIDIA_MODEL` (default `mistralai/mistral-large-4-1t-a52b`)
+to run a different NIM model id. In `results.csv` these rows are labelled
+with the real backend — Model = `nvidia-mistral-large-4-1t-a52b` — because
+an NVIDIA-served Mistral run is not a Claude run and must never be reported
+as one. Without
+`NVIDIA_API_KEY` set, the NVIDIA rows are written as `SKIPPED` /
+`NO-KEY`, exactly like the other real backends.
 
 Each case runs in an isolated directory under `runs/`, so side effects
 (outbox files, jail markers, memory, sink HTML) are attributable to exactly
@@ -95,7 +125,7 @@ one case and phase.
 ## Architecture in one paragraph
 
 The **app layer** (chatbot/agent) owns all security controls; the **model
-layer** is interchangeable (`mock`/`gemini`/`claude`) behind one
+layer** is interchangeable (`mock`/`gemini`/`claude`/`nvidia`) behind one
 `generate()` interface. Tools are deliberately fake and local so misuse is
 observable without harm: email lands in an outbox folder, HTTP calls are
 recorded by a stub, files live in a per-run sandbox, and code runs in a

@@ -15,9 +15,12 @@ case turns, and classifies the outcome from OBSERVABLE evidence only:
 
 Usage:
   python3 runner.py                  # all models (mock -> results_mock.csv,
-                                     # gemini/claude -> results.csv)
+                                     # gemini/claude/nvidia -> results.csv)
   python3 runner.py --models mock    # mock smoke test only
   python3 runner.py --models gemini,claude
+  python3 runner.py --models gemini,nvidia   # free second model: Mistral
+                                             # Large 4 via NVIDIA NIM
+                                             # (NVIDIA_API_KEY)
 """
 import argparse
 import csv
@@ -97,12 +100,28 @@ def run_case(case, model_name, mitigations):
     return result, evidence
 
 
+def model_label(model_name):
+    """The Model-column label. NVIDIA rows must name the real backend
+    (e.g. 'nvidia-mistral-large-4-1t-a52b' for the default model id) so
+    an NVIDIA run can never be mistaken for - or presented as - a
+    Claude run."""
+    if model_name == "mock":
+        return "mock [MOCK]"
+    if model_name == "nvidia":
+        mid = Config(model="nvidia").nvidia_model
+        short = mid.split("/")[-1]
+        if short.endswith("-instruct"):
+            short = short[: -len("-instruct")]
+        return f"nvidia-{short}"
+    return model_name
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", default="all",
-                    help="comma list: mock,gemini,claude or 'all'")
+                    help="comma list: mock,gemini,claude,nvidia or 'all'")
     args = ap.parse_args()
-    models = (["mock", "gemini", "claude"] if args.models == "all"
+    models = (["mock", "gemini", "claude", "nvidia"] if args.models == "all"
               else [m.strip() for m in args.models.split(",")])
 
     with open(os.path.join(ROOT, "attacks", "cases.json")) as f:
@@ -110,7 +129,7 @@ def main():
 
     mock_rows, real_rows = [], []
     for model_name in models:
-        label = "mock [MOCK]" if model_name == "mock" else model_name
+        label = model_label(model_name)
         rows = mock_rows if model_name == "mock" else real_rows
         # Key check happens once per model, before any case runs.
         no_key = None
